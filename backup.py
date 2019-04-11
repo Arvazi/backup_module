@@ -28,7 +28,8 @@ import hashlib
 import re
 import sys
 import datetime
-import gzip
+import tarfile
+from shutil import rmtree
 from path import path  # available from http://tompaton.com/resources/path.py
 
 # TODO
@@ -52,6 +53,7 @@ def backup(sources, excludes, dest, purge=False):
                             # all files with the same hash will have the same contents, so only need one name
 
     dest = path(dest)
+    blobs_path = dest / "blobs"
     exclude = make_predicate(excludes)
 
     for source in map(path, sources):
@@ -70,7 +72,7 @@ def backup(sources, excludes, dest, purge=False):
                 if not files_identical(fn, collision_check[hsh]):
                     raise Exception('Hash collision!!! Aborting backup')
 
-            blob_path = dest / hsh[:2] / hsh
+            blob_path = blobs_path / hsh[:2] / hsh
             if not blob_path.exists():
                 if not blob_path.parent.exists():
                     blob_path.parent.makedirs()
@@ -86,17 +88,22 @@ def backup(sources, excludes, dest, purge=False):
             collision_check[hsh] = fn
 
     print("Writing manifest...")
-    (dest / "manifest").write_lines("%s\t%s" % (hsh, fn)
+    (blobs_path / "manifest").write_lines("%s\t%s" % (hsh, fn)
                                     for fn, hsh in sorted(manifest.items()))
 
     # remove unreferenced blobs
     if purge:
-        for d in dest.dirs():
+        for d in blobs_path.dirs():
             for f in d.files():
                 if f.name not in collision_check:
                     f.unlink()
 
-    print(f"Backup done {datetime.datetime.now()}")
+    print("Compressing Backup..")
+    backup_archive = backup_compress(blobs_path, dest)
+
+    rmtree(blobs_path)
+
+    print(f"Backup done {backup_archive}")
 
 def file_hash(fn):
     """sha256 hash of file contents."""
@@ -127,12 +134,24 @@ def files_identical_py(f1, f2):
     return hsh1.hexdigest() == hsh2.hexdigest()
 
 
-def file_compress(backup):
-    pass
+def backup_compress(path, dest):
+    """compress and pack backup to .tar.gz"""
+    name = str(datetime.datetime.now()) + ".tar.gz"
+    tar = tarfile.open(f"{dest}/{name}", "w:gz")
+    tar.add(path, name)
+    tar.close()
+    return name
 
 
-def file_decompress(backup):
-    pass
+def backup_decompress(archive, dest):
+    """uncompress and unpack backup from .tar.gz"""
+
+    if not tarfile.is_tarfile(archive):
+        raise ValueError(f"File seems to be no tarfile: {archive}")
+
+    tar = tarfile.open(archive, "r:gz")
+    tar.extractall(dest)
+    tar.close()
 
 
 def make_predicate(tests):
@@ -147,11 +166,19 @@ def make_predicate(tests):
     return _inner
 
 
-def restore(manifest, dest, subset=None):
+def restore(archive, dest, subset=None):
     """Restore all files to their original names in the given target directory.
     optionally restoring only the subset that match the given list of regular expressions."""
     dest = path(dest)
-    manifest = path(manifest)
+    blobs = dest / "blobs/"
+
+    if not blobs.exists():
+        blobs.makedirs()
+
+    backup_decompress(archive, str(blobs))
+
+    manifest = blobs / (path(archive).namebase + ".gz") / "manifest"
+
     if subset:
         matches = make_predicate(subset)
     else:
@@ -168,8 +195,10 @@ def restore(manifest, dest, subset=None):
                 fn.parent.makedirs()
             hsh = manifest.parent / hsh[:2] / hsh
             hsh.copy(fn)
+
+    rmtree(str(blobs))
     
-    print(f"Restoring done {datetime.datetime.now()}")
+    print(f"Restored Backup {datetime.datetime.now()}")
 
 
 if __name__ == "__main__":
