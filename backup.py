@@ -28,7 +28,6 @@ import hashlib
 import re
 import sys
 import datetime
-import subprocess
 import gzip
 from path import path  # available from http://tompaton.com/resources/path.py
 
@@ -64,6 +63,7 @@ def backup(sources, excludes, dest, purge=False):
             try:
                 hsh = file_hash(fn)
             except Exception as e:
+                print(e)
                 continue
 
             if hsh in collision_check:
@@ -76,8 +76,7 @@ def backup(sources, excludes, dest, purge=False):
                     blob_path.parent.makedirs()
                 try:
                      # no point copying attrs, as there could be multiple files using this blob
-                    #fn.copy(blob_path)
-                    subprocess.call(['cp', fn, blob_path])
+                    fn.copy(blob_path)
                 except Exception as e:
                     print(f'Error copying file, skipping.\n{fn}\n{e}\n' % (fn, e))
                     continue
@@ -97,12 +96,11 @@ def backup(sources, excludes, dest, purge=False):
                 if f.name not in collision_check:
                     f.unlink()
 
-    print(f"Done {datetime.datetime.now()}")
+    print(f"Backup done {datetime.datetime.now()}")
 
 def file_hash(fn):
     """sha256 hash of file contents."""
-    #return file_hash_py(fn).hexdigest()
-    return subprocess.check_output(["sha256sum", fn]).split()[0]
+    return file_hash_py(fn).hexdigest()
     
 def file_hash_py(fileobj):
     """sha256 hash of file contents, without reading entire file into memory."""
@@ -117,15 +115,15 @@ def file_hash_py(fileobj):
 
 def files_identical(f1, f2):
     """check if files are really the same."""
-    #return files_identical_py(f1, f2)
-    return subprocess.call(['cmp', '-s', f1, f2]) == 0
+    return files_identical_py(f1, f2)
     
 def files_identical_py(f1, f2):
     """check if files are really the same."""
     # if they are equal, then adding an extra character to both will generate the same hash
     # if they are different, then the extra character will generate two different hashes this time
     hsh1, hsh2 = file_hash_py(f1), file_hash_py(f2)
-    hsh1.update('0') ; hsh2.update('0')
+    hsh1.update('0'.encode())
+    hsh2.update('0'.encode())
     return hsh1.hexdigest() == hsh2.hexdigest()
 
 
@@ -162,6 +160,7 @@ def restore(manifest, dest, subset=None):
     for line in manifest.lines():
         hsh, fn = line.strip().split("\t")
         if matches(fn):
+            print(f"Restoring: {fn} ({datetime.datetime.now()})")
             if fn[0] == '/':
                 fn = fn[1:]
             fn = dest / fn
@@ -169,6 +168,8 @@ def restore(manifest, dest, subset=None):
                 fn.parent.makedirs()
             hsh = manifest.parent / hsh[:2] / hsh
             hsh.copy(fn)
+    
+    print(f"Restoring done {datetime.datetime.now()}")
 
 
 if __name__ == "__main__":
