@@ -29,7 +29,7 @@ import re
 import sys
 import datetime
 import tarfile
-from os import unlink, linesep
+from os import unlink, linesep, path
 from shutil import rmtree, copy
 from pathlib import Path
 
@@ -39,7 +39,7 @@ from pathlib import Path
 # - Max Backup Size
 
 
-def backup(sourceFile, excludes, dest, purge=False):
+def backup(sourceFile, excludes, dest, purge=False, lastBackup=None):
     """Backup the directories in sources to the destination.
     exclude any files that match the patterns in the exclude list.
     store files with names based on a hash of their contents.
@@ -66,12 +66,17 @@ def backup(sourceFile, excludes, dest, purge=False):
 
     for source in sources:
         print(f"Backing up {source} ({datetime.datetime.now()})...")
-        for fn in source.rglob("*.*"):
+        for fn in source.glob("**/*.*"):
 
             if fn.is_dir():
                 continue
 
             if exclude(str(fn)):
+                continue
+
+            lastMod =  path.getmtime(str(fn))
+            if  lastMod > int(lastBackup):
+                print(f"Skipping file because wasn't modified since last backup: {fn}")
                 continue
 
             try:
@@ -101,6 +106,8 @@ def backup(sourceFile, excludes, dest, purge=False):
             collision_check[hsh] = fn
 
     print("Writing manifest...")
+    if not blobs_path.exists():
+        blobs_path.mkdir(parents=True)
     with open(blobs_path / "manifest", "a") as f:
         for fn, hsh in sorted(manifest.items()):
             f.write(f"{hsh}\t{fn}" + linesep)
@@ -230,23 +237,27 @@ if __name__ == "__main__":
     else:
         purge = False
 
-
+    lastModified = None
     if len(sys.argv) == 5:
-        excludes = filter(
-            None, map(str.strip, open(Path(sys.argv.pop())).readlines()))
-    else:
-        excludes=[]
+        lastModified = sys.argv.pop()
+
+    # if len(sys.argv) == 5:
+    #     excludes = filter(
+    #         None, map(str.strip, open(Path(sys.argv.pop())).readlines()))
+    # else:
+    #     excludes = []
+    excludes = []
     if len(sys.argv) != 4:
         raise Exception('Invalid arguments.')
-    dest=sys.argv.pop()
-    sources=sys.argv.pop()
-    mode=sys.argv.pop()
+    dest = sys.argv.pop()
+    sources = sys.argv.pop()
+    mode = sys.argv.pop()
 
     if mode == "-b":
-        backup(sources, excludes, dest, purge)
+        backup(sources, excludes, dest, purge, lastModified)
     elif mode == "-r":
-        manifest=sources
-        excludes=None
+        manifest = sources
+        excludes = None
         restore(manifest, dest, excludes)
     else:
         print("Unknown Mode: " + mode)
