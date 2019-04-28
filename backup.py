@@ -68,6 +68,9 @@ def backup(sourceFile, excludes, dest, purge=False):
         print(f"Backing up {source} ({datetime.datetime.now()})...")
         for fn in source.rglob("*.*"):
 
+            if fn.is_dir():
+                continue
+
             if exclude(str(fn)):
                 continue
 
