@@ -34,9 +34,8 @@ from path import path  # available from http://tompaton.com/resources/path.py
 
 # TODO
 # - Log to which point backup has proceeded (in case of interruption)
-# - Version Control
+# - Version Control (only backup files which have been modified)
 # - Max Backup Size
-# - Compression
 
 
 def backup(sources, excludes, dest, purge=False):
@@ -56,9 +55,10 @@ def backup(sources, excludes, dest, purge=False):
     blobs_path = dest / "blobs"
     exclude = make_predicate(excludes)
 
-    for source in map(path, sources):
+    for source in map(path.normpath, map(path, sources)):
         print(f"Backing up {source} ({datetime.datetime.now()})...")
         for fn in source.walkfiles(errors="warn"):
+
             if exclude(str(fn)):
                 continue
 
@@ -134,11 +134,12 @@ def files_identical_py(f1, f2):
     return hsh1.hexdigest() == hsh2.hexdigest()
 
 
-def backup_compress(path, dest):
+def backup_compress(source_path, dest):
     """compress and pack backup to .tar.gz"""
     name = str(datetime.datetime.now()) + ".tar.gz"
-    tar = tarfile.open(f"{dest}/{name}", "w:gz")
-    tar.add(path, name)
+    # name = "backup.tar.gz"
+    tar = tarfile.open(f"{path(dest/name).normpath()}", "w:gz")
+    tar.add(source_path, name)
     tar.close()
     return name
 
@@ -169,7 +170,7 @@ def make_predicate(tests):
 def restore(archive, dest, subset=None):
     """Restore all files to their original names in the given target directory.
     optionally restoring only the subset that match the given list of regular expressions."""
-    dest = path(dest)
+    dest = path(dest).normpath()
     blobs = dest / "blobs/"
 
     if not blobs.exists():
@@ -177,7 +178,7 @@ def restore(archive, dest, subset=None):
 
     backup_decompress(archive, str(blobs))
 
-    manifest = blobs / (path(archive).namebase + ".gz") / "manifest"
+    manifest = path(blobs / (path(archive).namebase + ".gz") / "manifest").normpath()
 
     if subset:
         matches = make_predicate(subset)
@@ -219,8 +220,8 @@ if __name__ == "__main__":
         excludes = []
     if len(sys.argv) != 4:
         raise Exception('Invalid arguments.')
-    dest = sys.argv.pop()
-    sources = sys.argv.pop()
+    dest = path(sys.argv.pop()).normpath()
+    sources = path(sys.argv.pop()).normpath()
     mode = sys.argv.pop()
 
     if mode == "-b":
