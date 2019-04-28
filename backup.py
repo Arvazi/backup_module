@@ -7,14 +7,14 @@ Create an archive which will be suitable for rsyncing to a remote backup.
  - doesn't try to do anything fancy with permissions etc.
    just a simple copy of each file it can read.
  - will do some basic file-level de-duplication.
- 
+
 Usage:
  backup.py source-paths-file destination-path [exclude-patterns-file] [--purge]
  source-directories-file should be a text file with paths to be backed up, one per line.
  e.g.
   /first/path/to/backup
   /second/path/to/backup
- 
+
  exclude-patterns-file is an optional text file of (python) regular expressions
  used to exclude matching files from the backup.
  e.g.
@@ -29,8 +29,9 @@ import re
 import sys
 import datetime
 import tarfile
-from shutil import rmtree
-from path import path  # available from http://tompaton.com/resources/path.py
+from os import unlink, linesep
+from shutil import rmtree, copy
+from pathlib import Path
 
 # TODO
 # - Log to which point backup has proceeded (in case of interruption)
@@ -38,12 +39,12 @@ from path import path  # available from http://tompaton.com/resources/path.py
 # - Max Backup Size
 
 
-def backup(sources, excludes, dest, purge=False):
+def backup(sourceFile, excludes, dest, purge=False):
     """Backup the directories in sources to the destination.
     exclude any files that match the patterns in the exclude list.
     store files with names based on a hash of their contents.
     write a manifest mapping the hash to the original file path.
-        
+
     if purge is True, blobs will be removed from the dest folders
     if they are no longer used by any files in the manifest."""
 
@@ -51,13 +52,21 @@ def backup(sources, excludes, dest, purge=False):
     collision_check = {}    # hash --> filename
                             # all files with the same hash will have the same contents, so only need one name
 
-    dest = path(dest)
+    dest = Path(dest)
     blobs_path = dest / "blobs"
     exclude = make_predicate(excludes)
 
-    for source in map(path.normpath, map(path, sources)):
+    if not Path(sourceFile).is_file():
+        print(f"Sources File is no File: {sourceFile}")
+        return
+
+    with open(sourceFile) as f:
+        sources = f.readlines()
+    sources = map(Path, map(str.strip, sources))
+
+    for source in sources:
         print(f"Backing up {source} ({datetime.datetime.now()})...")
-        for fn in source.walkfiles(errors="warn"):
+        for fn in source.rglob("*.*"):
 
             if exclude(str(fn)):
                 continue
@@ -75,12 +84,13 @@ def backup(sources, excludes, dest, purge=False):
             blob_path = blobs_path / hsh[:2] / hsh
             if not blob_path.exists():
                 if not blob_path.parent.exists():
-                    blob_path.parent.makedirs()
+                    blob_path.parent.mkdir(parents=True)
                 try:
                      # no point copying attrs, as there could be multiple files using this blob
-                    fn.copy(blob_path)
+                    copy(str(fn), str(blob_path))
                 except Exception as e:
-                    print(f'Error copying file, skipping.\n{fn}\n{e}\n' % (fn, e))
+                    print(
+                        f'Error copying file, skipping.\n{fn}\n{e}\n' % (fn, e))
                     continue
 
             manifest[str(fn)] = hsh
@@ -88,15 +98,17 @@ def backup(sources, excludes, dest, purge=False):
             collision_check[hsh] = fn
 
     print("Writing manifest...")
-    (blobs_path / "manifest").write_lines("%s\t%s" % (hsh, fn)
-                                    for fn, hsh in sorted(manifest.items()))
+    with open(blobs_path / "manifest", "a") as f:
+        for fn, hsh in sorted(manifest.items()):
+            f.write(f"{hsh}\t{fn}" + linesep)
 
     # remove unreferenced blobs
     if purge:
-        for d in blobs_path.dirs():
-            for f in d.files():
-                if f.name not in collision_check:
-                    f.unlink()
+        for d in blobs_path.glob("*/"):
+            if d.is_dir():
+                for f in d.glob("*.*"):
+                    if f.name not in collision_check:
+                        unlink(f)
 
     print("Compressing Backup..")
     backup_archive = backup_compress(blobs_path, dest)
@@ -105,10 +117,48 @@ def backup(sources, excludes, dest, purge=False):
 
     print(f"Backup done {backup_archive}")
 
+
+def restore(archive, dest, subset=None):
+    """Restore all files to their original names in the given target directory.
+    optionally restoring only the subset that match the given list of regular expressions."""
+    dest = Path(dest)
+    blobs = dest / "blobs/"
+
+    if not blobs.exists():
+        blobs.mkdir(parents=True)
+
+    backup_decompress(archive, str(blobs))
+
+    manifest = blobs / Path(Path(archive).name) / "manifest"
+
+    if subset:
+        matches=make_predicate(subset)
+    else:
+        matches=lambda fn: True
+
+    with open(manifest) as f:
+        lines = f.readlines()
+
+    for line in lines:
+        hsh, fn = line.strip().split("\t")
+        if matches(fn):
+            print(f"Restoring: {fn} ({datetime.datetime.now()})")
+            if fn[0] == '/':
+                fn = fn[1:]
+            fn = dest / fn
+            if not fn.parent.exists():
+                fn.parent.mkdir(parents=True)
+            hsh = manifest.parent / hsh[:2] / hsh
+            copy(str(hsh), str(fn))
+
+    rmtree(str(blobs))
+
+    print(f"Restored Backup {datetime.datetime.now()}")
+
 def file_hash(fn):
     """sha256 hash of file contents."""
     return file_hash_py(fn).hexdigest()
-    
+
 def file_hash_py(fileobj):
     """sha256 hash of file contents, without reading entire file into memory."""
     hsh = hashlib.sha256()
@@ -123,7 +173,7 @@ def file_hash_py(fileobj):
 def files_identical(f1, f2):
     """check if files are really the same."""
     return files_identical_py(f1, f2)
-    
+
 def files_identical_py(f1, f2):
     """check if files are really the same."""
     # if they are equal, then adding an extra character to both will generate the same hash
@@ -136,9 +186,9 @@ def files_identical_py(f1, f2):
 
 def backup_compress(source_path, dest):
     """compress and pack backup to .tar.gz"""
-    name = str(datetime.datetime.now()) + ".tar.gz"
+    name = str(datetime.datetime.now()).replace(" ", ".").replace(":", ".") + ".tar.gz"
     # name = "backup.tar.gz"
-    tar = tarfile.open(f"{path(dest/name).normpath()}", "w:gz")
+    tar = tarfile.open(f"{Path(dest/name)}", "w:gz")
     tar.add(source_path, name)
     tar.close()
     return name
@@ -167,41 +217,6 @@ def make_predicate(tests):
     return _inner
 
 
-def restore(archive, dest, subset=None):
-    """Restore all files to their original names in the given target directory.
-    optionally restoring only the subset that match the given list of regular expressions."""
-    dest = path(dest).normpath()
-    blobs = dest / "blobs/"
-
-    if not blobs.exists():
-        blobs.makedirs()
-
-    backup_decompress(archive, str(blobs))
-
-    manifest = path(blobs / (path(archive).namebase + ".gz") / "manifest").normpath()
-
-    if subset:
-        matches = make_predicate(subset)
-    else:
-        matches = lambda fn: True
-
-    for line in manifest.lines():
-        hsh, fn = line.strip().split("\t")
-        if matches(fn):
-            print(f"Restoring: {fn} ({datetime.datetime.now()})")
-            if fn[0] == '/':
-                fn = fn[1:]
-            fn = dest / fn
-            if not fn.parent.exists():
-                fn.parent.makedirs()
-            hsh = manifest.parent / hsh[:2] / hsh
-            hsh.copy(fn)
-
-    rmtree(str(blobs))
-    
-    print(f"Restored Backup {datetime.datetime.now()}")
-
-
 if __name__ == "__main__":
     # TODO
     # arg exlcudes in restore can't be used right now
@@ -215,21 +230,20 @@ if __name__ == "__main__":
 
     if len(sys.argv) == 5:
         excludes = filter(
-            None, map(str.strip, path(sys.argv.pop()).lines()))
+            None, map(str.strip, open(Path(sys.argv.pop())).readlines()))
     else:
-        excludes = []
+        excludes=[]
     if len(sys.argv) != 4:
         raise Exception('Invalid arguments.')
-    dest = path(sys.argv.pop()).normpath()
-    sources = path(sys.argv.pop()).normpath()
-    mode = sys.argv.pop()
+    dest=sys.argv.pop()
+    sources=sys.argv.pop()
+    mode=sys.argv.pop()
 
     if mode == "-b":
-        sources = filter(None, map(str.strip, path(sources).lines()))
         backup(sources, excludes, dest, purge)
     elif mode == "-r":
-        manifest = sources
-        excludes = None
+        manifest=sources
+        excludes=None
         restore(manifest, dest, excludes)
     else:
         print("Unknown Mode: " + mode)
