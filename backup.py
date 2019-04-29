@@ -35,7 +35,7 @@ from pathlib import Path
 
 # TODO
 # - Log to which point backup has proceeded (in case of interruption)
-# - Version Control (only backup files which have been modified)
+# - change lastmodified feature to act like an array and not like a linked list (don't traverse file to file, just link path of actual location)
 # - Max Backup Size
 
 
@@ -138,14 +138,14 @@ def restore(archive, dest, subset=None):
     """Restore all files to their original names in the given target directory.
     optionally restoring only the subset that match the given list of regular expressions."""
     dest = Path(dest)
-    blobs = dest / "blobs/"
+    blobs_path = dest / "blobs/"
 
-    if not blobs.exists():
-        blobs.mkdir(parents=True)
+    if not blobs_path.exists():
+        blobs_path.mkdir(parents=True)
 
-    backup_decompress(archive, str(blobs))
+    backup_decompress(archive, str(blobs_path))
 
-    manifest = blobs / Path(Path(archive).name) / "manifest"
+    manifest = blobs_path / Path(Path(archive).name) / "manifest"
 
     if subset:
         matches = make_predicate(subset)
@@ -154,50 +154,92 @@ def restore(archive, dest, subset=None):
 
     with open(manifest) as f:
         lines = f.readlines()
-
-    last_backup = get_manifest_lastbackup(lines)
+        lines.pop()
 
     for line in lines:
         hsh, fn = line.strip().split("\t")
-        if matches(fn):
-            print(f"Restoring: {fn} ({datetime.datetime.now()})")
-            if fn[0] == '/':
-                fn = fn[1:]
-            fn = dest / fn
-            if not fn.parent.exists():
-                fn.parent.mkdir(parents=True)
-            hsh = manifest.parent / hsh[:2] / hsh
-            copy(str(hsh), str(fn))
 
-    rmtree(str(blobs))
+        if not matches(fn):
+            continue
+
+        print(f"Restoring: {fn} ({datetime.datetime.now()})")
+
+        if "lb:" in hsh:
+            lb_name = hsh.split(":")[1]
+            hsh = recursive_restore(
+                fn, Path(archive).parent, lb_name, blobs_path / Path(Path(archive).name))
+            if not hsh:
+                print(f"Error restoring file {fn} ({datetime.datetime.now()})! Couldn't find it recursive")
+                continue
+
+        hsh_path = manifest.parent / hsh[:2] / hsh
+
+        if fn[0] == '/':
+            fn = fn[1:]
+
+        f_path = dest / fn
+        if not f_path.parent.exists():
+            f_path.parent.mkdir(parents=True)
+        copy(str(hsh_path), str(f_path))
+
+    rmtree(str(blobs_path))
 
     print(f"Restored Backup {datetime.datetime.now()}")
+
+
+def recursive_restore(fn, backup_path, last_backup, blobs_path):
+    zip_path = backup_path / (last_backup + ".tar.gz")
+
+    if not Path(zip_path).exists():
+        return None
+
+    lines = read_compressed_manifest(zip_path)
+    search_res = search_manifest_file(lines, fn)
+    if len(search_res) == 64:
+        hsh = search_res
+        hsh_path = Path(hsh[:2]) / hsh
+
+        tar = tarfile.open(zip_path, "r:gz")
+
+        f_path_in_zip = Path(zip_path).name / hsh_path
+
+        if not (blobs_path / hsh_path).parent.exists():
+            (blobs_path / hsh_path).parent.mkdir(parents=True)
+        f = open(str(blobs_path / hsh_path), "wb")
+        f.write(tar.extractfile(str(f_path_in_zip)).read())
+        f.close()
+
+        return hsh
+    elif not search_res:
+        return None
+    else:
+        return recursive_restore(fn, backup_path, search_res, blobs_path)
+    return None
 
 def recursive_search_for_file(fn, backup_path, last_backup):
     """recursive through all backups
     beginning with specified last_backup
     searches for the fn name and if there is a backup with a hash for the file"""
-    zip_path = backup_path / (last_backup + ".tar.gz")
+    zip_path=backup_path / (last_backup + ".tar.gz")
 
     if not Path(zip_path).exists():
         return False
 
-    lines = read_compressed_manifest(zip_path)
-    search_res = search_manifest_file(lines, fn)
+    lines=read_compressed_manifest(zip_path)
+    search_res=search_manifest_file(lines, fn)
     if len(search_res) == 64:
         return True
-    else:
-        if not search_res:
-            return False
-        elif recursive_search_for_file(fn, backup_path, search_res):
-            return True
+    elif not search_res:
+        return False
+    elif recursive_search_for_file(fn, backup_path, search_res):
+        return True
     return False
 
 
-def search_manifest_file(lines, file):
+def search_manifest_file(lines, fn):
     for line in lines:
-        if str(file) in line:
-            leftside = line.split("\t")[0]
+        if str(fn) in line:
+            leftside=line.split("\t")[0]
             if ":" in leftside:
                 # retrieve last backup time from line
                 return leftside.split(":")[1]
@@ -207,10 +249,10 @@ def search_manifest_file(lines, file):
 
 
 def read_compressed_manifest(zip_path):
-    tar = tarfile.open(zip_path, "r:gz")
-    manifest_path = Path(zip_path).name / Path("manifest")
-    f = tar.extractfile(str(manifest_path))
-    lines = map(bytes.decode, f.readlines())
+    tar=tarfile.open(zip_path, "r:gz")
+    manifest_path=Path(zip_path).name / Path("manifest")
+    f=tar.extractfile(str(manifest_path))
+    lines=map(bytes.decode, f.readlines())
     tar.close()
     return lines
 
