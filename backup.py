@@ -39,7 +39,7 @@ from pathlib import Path
 # - Max Backup Size
 
 
-def backup(sourceFile, excludes, dest, purge=False, lastBackup=None):
+def backup(sourceFile, excludes, dest, purge=False, last_backup=None):
     """Backup the directories in sources to the destination.
     exclude any files that match the patterns in the exclude list.
     store files with names based on a hash of their contents.
@@ -74,11 +74,15 @@ def backup(sourceFile, excludes, dest, purge=False, lastBackup=None):
             if exclude(str(fn)):
                 continue
 
+            # check if mod date is older than lastbackup --> search if backup still exists --> skip file
             lastMod = path.getmtime(str(fn))
-            if lastMod > int(lastBackup):
-                print(
-                    f"Skipping file because wasn't modified since last backup: {fn}")
-                continue
+            if lastMod < int(last_backup):
+                if recursive_search_for_file(fn, dest, last_backup):
+                    manifest[str(fn)] = f"lb:{last_backup}"
+
+                    print(
+                        f"Skipping: file wasn't modified since last backup: {fn}")
+                    continue
 
             try:
                 hsh = file_hash(fn)
@@ -112,7 +116,7 @@ def backup(sourceFile, excludes, dest, purge=False, lastBackup=None):
     with open(blobs_path / "manifest", "a") as f:
         for fn, hsh in sorted(manifest.items()):
             f.write(f"{hsh}\t{fn}" + linesep)
-        f.write(f"lastBackup:{lastBackup}" + linesep)
+        f.write(f"lastBackup:{last_backup}:" + linesep)
 
     # remove unreferenced blobs
     if purge:
@@ -151,8 +155,7 @@ def restore(archive, dest, subset=None):
     with open(manifest) as f:
         lines = f.readlines()
 
-    if "lastBackup" in sources[-1]:
-        lastBackup = sources.pop().split(":")[-1]
+    last_backup = get_manifest_lastbackup(lines)
 
     for line in lines:
         hsh, fn = line.strip().split("\t")
@@ -170,6 +173,50 @@ def restore(archive, dest, subset=None):
 
     print(f"Restored Backup {datetime.datetime.now()}")
 
+def recursive_search_for_file(fn, backup_path, last_backup):
+    """recursive through all backups
+    beginning with specified last_backup
+    searches for the fn name and if there is a backup with a hash for the file"""
+    zip_path = backup_path / (last_backup + ".tar.gz")
+
+    if not Path(zip_path).exists():
+        return False
+
+    lines = read_compressed_manifest(zip_path)
+    search_res = search_manifest_file(lines, fn)
+    if len(search_res) == 64:
+        return True
+    else:
+        if not search_res:
+            return False
+        elif recursive_search_for_file(fn, backup_path, search_res):
+            return True
+    return False
+
+
+def search_manifest_file(lines, file):
+    for line in lines:
+        if str(file) in line:
+            leftside = line.split("\t")[0]
+            if ":" in leftside:
+                # retrieve last backup time from line
+                return leftside.split(":")[1]
+            else:
+                return leftside
+    return None
+
+
+def read_compressed_manifest(zip_path):
+    tar = tarfile.open(zip_path, "r:gz")
+    manifest_path = Path(zip_path).name / Path("manifest")
+    f = tar.extractfile(str(manifest_path))
+    lines = map(bytes.decode, f.readlines())
+    tar.close()
+    return lines
+
+def get_manifest_lastbackup(lines):
+    if "lastBackup" in lines[-1]:
+        return lines.pop().split(":")[1]
 
 def file_hash(fn):
     """sha256 hash of file contents."""
@@ -178,10 +225,10 @@ def file_hash(fn):
 
 def file_hash_py(fileobj):
     """sha256 hash of file contents, without reading entire file into memory."""
-    hsh = hashlib.sha256()
-    f = fileobj.open('rb')
+    hsh=hashlib.sha256()
+    f=fileobj.open('rb')
     while True:
-        chunk = f.read(8192)
+        chunk=f.read(8192)
         if not chunk:
             break
         hsh.update(chunk)
@@ -197,7 +244,7 @@ def files_identical_py(f1, f2):
     """check if files are really the same."""
     # if they are equal, then adding an extra character to both will generate the same hash
     # if they are different, then the extra character will generate two different hashes this time
-    hsh1, hsh2 = file_hash_py(f1), file_hash_py(f2)
+    hsh1, hsh2=file_hash_py(f1), file_hash_py(f2)
     hsh1.update('0'.encode())
     hsh2.update('0'.encode())
     return hsh1.hexdigest() == hsh2.hexdigest()
@@ -205,7 +252,8 @@ def files_identical_py(f1, f2):
 
 def backup_compress(source_path, dest):
     """compress and pack backup to .tar.gz"""
-    name = str(round(datetime.datetime.timestamp(datetime.datetime.now()))) + ".tar.gz"
+    name=str(round(datetime.datetime.timestamp(
+        datetime.datetime.now()))) + ".tar.gz"
     # name = "backup.tar.gz"
     tar=tarfile.open(f"{Path(dest/name)}", "w:gz")
     tar.add(source_path, name)
@@ -222,9 +270,6 @@ def backup_decompress(archive, dest):
     tar=tarfile.open(archive, "r:gz")
     tar.extractall(dest)
     tar.close()
-
-def check_prev_existence(last):
-
 
 def make_predicate(tests):
     """return function that tests a filename against a list of regular expressions and returns
