@@ -74,9 +74,10 @@ def backup(sourceFile, excludes, dest, purge=False, lastBackup=None):
             if exclude(str(fn)):
                 continue
 
-            lastMod =  path.getmtime(str(fn))
-            if  lastMod > int(lastBackup):
-                print(f"Skipping file because wasn't modified since last backup: {fn}")
+            lastMod = path.getmtime(str(fn))
+            if lastMod > int(lastBackup):
+                print(
+                    f"Skipping file because wasn't modified since last backup: {fn}")
                 continue
 
             try:
@@ -111,6 +112,7 @@ def backup(sourceFile, excludes, dest, purge=False, lastBackup=None):
     with open(blobs_path / "manifest", "a") as f:
         for fn, hsh in sorted(manifest.items()):
             f.write(f"{hsh}\t{fn}" + linesep)
+        f.write(f"lastBackup:{lastBackup}" + linesep)
 
     # remove unreferenced blobs
     if purge:
@@ -142,12 +144,15 @@ def restore(archive, dest, subset=None):
     manifest = blobs / Path(Path(archive).name) / "manifest"
 
     if subset:
-        matches=make_predicate(subset)
+        matches = make_predicate(subset)
     else:
-        matches=lambda fn: True
+        matches = lambda fn: True
 
     with open(manifest) as f:
         lines = f.readlines()
+
+    if "lastBackup" in sources[-1]:
+        lastBackup = sources.pop().split(":")[-1]
 
     for line in lines:
         hsh, fn = line.strip().split("\t")
@@ -165,9 +170,11 @@ def restore(archive, dest, subset=None):
 
     print(f"Restored Backup {datetime.datetime.now()}")
 
+
 def file_hash(fn):
     """sha256 hash of file contents."""
     return file_hash_py(fn).hexdigest()
+
 
 def file_hash_py(fileobj):
     """sha256 hash of file contents, without reading entire file into memory."""
@@ -180,9 +187,11 @@ def file_hash_py(fileobj):
         hsh.update(chunk)
     return hsh
 
+
 def files_identical(f1, f2):
     """check if files are really the same."""
     return files_identical_py(f1, f2)
+
 
 def files_identical_py(f1, f2):
     """check if files are really the same."""
@@ -196,9 +205,9 @@ def files_identical_py(f1, f2):
 
 def backup_compress(source_path, dest):
     """compress and pack backup to .tar.gz"""
-    name = str(datetime.datetime.now()).replace(" ", ".").replace(":", ".") + ".tar.gz"
+    name = str(round(datetime.datetime.timestamp(datetime.datetime.now()))) + ".tar.gz"
     # name = "backup.tar.gz"
-    tar = tarfile.open(f"{Path(dest/name)}", "w:gz")
+    tar=tarfile.open(f"{Path(dest/name)}", "w:gz")
     tar.add(source_path, name)
     tar.close()
     return name
@@ -210,14 +219,17 @@ def backup_decompress(archive, dest):
     if not tarfile.is_tarfile(archive):
         raise ValueError(f"File seems to be no tarfile: {archive}")
 
-    tar = tarfile.open(archive, "r:gz")
+    tar=tarfile.open(archive, "r:gz")
     tar.extractall(dest)
     tar.close()
 
+def check_prev_existence(last):
+
 
 def make_predicate(tests):
-    """return function that tests a filename against a list of regular expressions and returns True if any match."""
-    tests = map(re.compile, tests)
+    """return function that tests a filename against a list of regular expressions and returns
+    True if any match."""
+    tests=map(re.compile, tests)
 
     def _inner(fn):
         for test in tests:
@@ -232,32 +244,32 @@ if __name__ == "__main__":
     # arg exlcudes in restore can't be used right now
 
     if '--purge' in sys.argv:
-        purge = True
+        purge=True
         sys.argv.remove('--purge')
     else:
-        purge = False
+        purge=False
 
-    lastModified = None
+    lastModified=None
     if len(sys.argv) == 5:
-        lastModified = sys.argv.pop()
+        lastModified=sys.argv.pop()
 
     # if len(sys.argv) == 5:
     #     excludes = filter(
     #         None, map(str.strip, open(Path(sys.argv.pop())).readlines()))
     # else:
     #     excludes = []
-    excludes = []
+    excludes=[]
     if len(sys.argv) != 4:
         raise Exception('Invalid arguments.')
-    dest = sys.argv.pop()
-    sources = sys.argv.pop()
-    mode = sys.argv.pop()
+    dest=sys.argv.pop()
+    sources=sys.argv.pop()
+    mode=sys.argv.pop()
 
     if mode == "-b":
         backup(sources, excludes, dest, purge, lastModified)
     elif mode == "-r":
-        manifest = sources
-        excludes = None
+        manifest=sources
+        excludes=None
         restore(manifest, dest, excludes)
     else:
         print("Unknown Mode: " + mode)
