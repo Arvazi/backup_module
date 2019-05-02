@@ -29,7 +29,7 @@ import re
 import sys
 import datetime
 import tarfile
-from os import unlink, linesep, path
+from os import unlink, path
 from shutil import rmtree, copy
 from pathlib import Path
 
@@ -116,8 +116,8 @@ def backup(sourceFile, excludes, dest, purge=False, last_backup=None):
         blobs_path.mkdir(parents=True)
     with open(blobs_path / "manifest", "a") as f:
         for fn, hsh in sorted(manifest.items()):
-            f.write(f"{hsh}\t{fn}" + linesep)
-        f.write(f"lastBackup:{last_backup}:" + linesep)
+            f.write(f"{hsh}\t{fn}" + '\n')
+        f.write(f"lastBackup:{last_backup}:" + '\n')
 
     # remove unreferenced blobs
     if purge:
@@ -162,6 +162,9 @@ def restore(archive, dest, subset=None):
         lines.pop()
 
     for line in lines:
+        if line == '\n':
+            continue
+
         hsh, fn = line.strip().split("\t")
 
         if not matches(fn):
@@ -205,7 +208,9 @@ def recursive_restore(fn, backup_path, last_backup, blobs_path):
 
     lines = read_compressed_manifest(zip_path)
     search_res = search_manifest_file(lines, fn)
-    if len(search_res) == 64:
+    if not search_res:
+        return None
+    elif len(search_res) == 64:
         hsh = search_res
         hsh_path = Path(hsh[:2]) / hsh
 
@@ -216,13 +221,11 @@ def recursive_restore(fn, backup_path, last_backup, blobs_path):
         if not (blobs_path / hsh_path).parent.exists():
             (blobs_path / hsh_path).parent.mkdir(parents=True)
         f = open(str(blobs_path / hsh_path), "wb")
-        f.write(tar.extractfile(str(f_path_in_zip)).read())
+        f.write(tar.extractfile(str(f_path_in_zip).replace("\\", "/")).read())
         f.close()
         tar.close()
 
         return hsh
-    elif not search_res:
-        return None
     else:
         return recursive_restore(fn, backup_path, search_res, blobs_path)
     return None
@@ -280,7 +283,7 @@ def read_compressed_manifest(zip_path):
     str_manifest = str(manifest_zip_path).replace("\\", "/")
 
     f = tar.extractfile(str_manifest)
-    lines = map(bytes.decode, f.readlines())
+    lines = list(map(bytes.decode, f.readlines()))
     tar.close()
 
     # temp save manifest in case it'd be opened more times this session
