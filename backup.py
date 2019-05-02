@@ -133,7 +133,7 @@ def backup(sourceFile, excludes, dest, purge=False, last_backup=None):
     rmtree(blobs_path)
 
     manifests_path = (Path(dest) / "manifests")
-    if manifests_path.exists:
+    if manifests_path.exists():
         rmtree(str(manifests_path))
 
     print(f"Backup done {backup_archive}")
@@ -268,14 +268,15 @@ def read_compressed_manifest(zip_path):
     """Read from a .tar.gz compressed backup the manifest and return the lines as array"""
 
     # Check if manifest was already unpacked in this session and read from there
+    manifest_path = Path(Path(zip_path).name) / "manifest"
     manifests_path = Path(zip_path).parent / "manifests"
     manifest = manifests_path / re.search(r"^\d+", Path(zip_path).name).group()
+
     if manifests_path.exists() and manifest.exists():
         with open(manifest) as f:
             return f.readlines()
 
     tar = tarfile.open(zip_path, "r:gz")
-    manifest_path = Path(zip_path).name / Path("manifest")
     f = tar.extractfile(str(manifest_path))
     lines = map(bytes.decode, f.readlines())
     tar.close()
