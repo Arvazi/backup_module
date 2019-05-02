@@ -277,7 +277,9 @@ def read_compressed_manifest(zip_path):
             return f.readlines()
 
     tar = tarfile.open(zip_path, "r:gz")
-    f = tar.extractfile(str(manifest_zip_path))
+    str_manifest = str(manifest_zip_path).replace("\\", "/")
+
+    f = tar.extractfile(str_manifest)
     lines = map(bytes.decode, f.readlines())
     tar.close()
 
