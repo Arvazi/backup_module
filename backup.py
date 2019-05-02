@@ -268,7 +268,7 @@ def read_compressed_manifest(zip_path):
     """Read from a .tar.gz compressed backup the manifest and return the lines as array"""
 
     # Check if manifest was already unpacked in this session and read from there
-    manifest_zip_path = Path(zip_path).name / "manifest"
+    manifest_zip_path = Path(zip_path).name / Path("manifest")
     manifests_dir = Path(zip_path).parent / "manifests"
     manifest_path = manifests_dir / re.search(r"^\d+", Path(zip_path).name).group()
 
