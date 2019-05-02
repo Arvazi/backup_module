@@ -268,24 +268,24 @@ def read_compressed_manifest(zip_path):
     """Read from a .tar.gz compressed backup the manifest and return the lines as array"""
 
     # Check if manifest was already unpacked in this session and read from there
-    manifest_path = Path(Path(zip_path).name) / "manifest"
-    manifests_path = Path(zip_path).parent / "manifests"
-    manifest = manifests_path / re.search(r"^\d+", Path(zip_path).name).group()
+    manifest_zip_path = Path(zip_path).name / "manifest"
+    manifests_dir = Path(zip_path).parent / "manifests"
+    manifest_path = manifests_dir / re.search(r"^\d+", Path(zip_path).name).group()
 
-    if manifests_path.exists() and manifest.exists():
-        with open(manifest) as f:
+    if manifests_dir.exists() and manifest_path.exists():
+        with open(manifest_path) as f:
             return f.readlines()
 
     tar = tarfile.open(zip_path, "r:gz")
-    f = tar.extractfile(str(manifest_path))
+    f = tar.extractfile(str(manifest_zip_path))
     lines = map(bytes.decode, f.readlines())
     tar.close()
 
     # temp save manifest in case it'd be opened more times this session
-    if not manifests_path.exists():
-        manifests_path.mkdir(parents=True)
-    if not manifest.exists():
-        with open(manifest, "w") as f:
+    if not manifests_dir.exists():
+        manifests_dir.mkdir(parents=True)
+    if not manifest_path.exists():
+        with open(manifest_path, "w") as f:
             f.writelines(lines)
 
     return lines
@@ -301,10 +301,10 @@ def file_hash(fn):
 
 def file_hash_py(fileobj):
     """sha256 hash of file contents, without reading entire file into memory."""
-    hsh=hashlib.sha256()
-    f=fileobj.open('rb')
+    hsh = hashlib.sha256()
+    f = fileobj.open('rb')
     while True:
-        chunk=f.read(8192)
+        chunk = f.read(8192)
         if not chunk:
             break
         hsh.update(chunk)
@@ -320,7 +320,7 @@ def files_identical_py(f1, f2):
     """check if files are really the same."""
     # if they are equal, then adding an extra character to both will generate the same hash
     # if they are different, then the extra character will generate two different hashes this time
-    hsh1, hsh2=file_hash_py(f1), file_hash_py(f2)
+    hsh1, hsh2 = file_hash_py(f1), file_hash_py(f2)
     hsh1.update('0'.encode())
     hsh2.update('0'.encode())
     return hsh1.hexdigest() == hsh2.hexdigest()
@@ -328,10 +328,10 @@ def files_identical_py(f1, f2):
 
 def backup_compress(source_path, dest):
     """compress and pack backup to .tar.gz"""
-    name=str(round(datetime.datetime.timestamp(
+    name = str(round(datetime.datetime.timestamp(
         datetime.datetime.now()))) + ".tar.gz"
     # name = "backup.tar.gz"
-    tar=tarfile.open(f"{Path(dest/name)}", "w:gz")
+    tar = tarfile.open(f"{Path(dest/name)}", "w:gz")
     tar.add(source_path, name)
     tar.close()
     return name
@@ -343,7 +343,7 @@ def backup_decompress(archive, dest):
     if not tarfile.is_tarfile(archive):
         raise ValueError(f"File seems to be no tarfile: {archive}")
 
-    tar=tarfile.open(archive, "r:gz")
+    tar = tarfile.open(archive, "r:gz")
     tar.extractall(dest)
     tar.close()
 
