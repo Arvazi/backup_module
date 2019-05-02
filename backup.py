@@ -35,8 +35,9 @@ from pathlib import Path
 
 # TODO
 # - Log to which point backup has proceeded (in case of interruption)
-# - change lastmodified feature to act like an array and not like a linked list (don't traverse file to file, just link path of actual location)
+# - manifest should link diretctly to the backup containing the not modified version of file instead of linking to predecessor
 # - Max Backup Size
+# - Check for maxbackup size if backups are deleted which are linked to newer ones
 
 
 def backup(sourceFile, excludes, dest, purge=False, last_backup=None):
@@ -131,6 +132,10 @@ def backup(sourceFile, excludes, dest, purge=False, last_backup=None):
 
     rmtree(blobs_path)
 
+    manifests_path = (Path(dest) / "manifests")
+    if manifests_path.exists:
+        rmtree(str(manifests_path))
+
     print(f"Backup done {backup_archive}")
 
 
@@ -169,7 +174,8 @@ def restore(archive, dest, subset=None):
             hsh = recursive_restore(
                 fn, Path(archive).parent, lb_name, blobs_path / Path(Path(archive).name))
             if not hsh:
-                print(f"Error restoring file {fn} ({datetime.datetime.now()})! Couldn't find it recursive")
+                print(
+                    f"Error restoring file {fn} ({datetime.datetime.now()})! Couldn't find it recursive")
                 continue
 
         hsh_path = manifest.parent / hsh[:2] / hsh
@@ -183,6 +189,10 @@ def restore(archive, dest, subset=None):
         copy(str(hsh_path), str(f_path))
 
     rmtree(str(blobs_path))
+
+    manifests_path = (Path(Path(archive).parent) / "manifests")
+    if manifests_path.exists:
+        rmtree(str(manifests_path))
 
     print(f"Restored Backup {datetime.datetime.now()}")
 
@@ -208,6 +218,7 @@ def recursive_restore(fn, backup_path, last_backup, blobs_path):
         f = open(str(blobs_path / hsh_path), "wb")
         f.write(tar.extractfile(str(f_path_in_zip)).read())
         f.close()
+        tar.close()
 
         return hsh
     elif not search_res:
@@ -216,30 +227,35 @@ def recursive_restore(fn, backup_path, last_backup, blobs_path):
         return recursive_restore(fn, backup_path, search_res, blobs_path)
     return None
 
+
 def recursive_search_for_file(fn, backup_path, last_backup):
     """recursive through all backups
     beginning with specified last_backup
     searches for the fn name and if there is a backup with a hash for the file"""
-    zip_path=backup_path / (last_backup + ".tar.gz")
+    zip_path = backup_path / (last_backup + ".tar.gz")
 
     if not Path(zip_path).exists():
         return False
 
-    lines=read_compressed_manifest(zip_path)
-    search_res=search_manifest_file(lines, fn)
-    if len(search_res) == 64:
-        return True
-    elif not search_res:
+    lines = read_compressed_manifest(zip_path)
+    search_res = search_manifest_file(lines, fn)
+
+    if not search_res:
         return False
+    elif len(search_res) == 64:
+        return True
     elif recursive_search_for_file(fn, backup_path, search_res):
         return True
     return False
 
 
 def search_manifest_file(lines, fn):
+    """Search in manifest as lines array
+     if there is linked a give filename (or path)
+      and give back the hash or the lastbackup file."""
     for line in lines:
         if str(fn) in line:
-            leftside=line.split("\t")[0]
+            leftside = line.split("\t")[0]
             if ":" in leftside:
                 # retrieve last backup time from line
                 return leftside.split(":")[1]
@@ -249,11 +265,28 @@ def search_manifest_file(lines, fn):
 
 
 def read_compressed_manifest(zip_path):
-    tar=tarfile.open(zip_path, "r:gz")
-    manifest_path=Path(zip_path).name / Path("manifest")
-    f=tar.extractfile(str(manifest_path))
-    lines=map(bytes.decode, f.readlines())
+    """Read from a .tar.gz compressed backup the manifest and return the lines as array"""
+
+    # Check if manifest was already unpacked in this session and read from there
+    manifests_path = Path(zip_path).parent / "manifests"
+    manifest = manifests_path / re.search(r"^\d+", Path(zip_path).name).group()
+    if manifests_path.exists() and manifest.exists():
+        with open(manifest) as f:
+            return f.readlines()
+
+    tar = tarfile.open(zip_path, "r:gz")
+    manifest_path = Path(zip_path).name / Path("manifest")
+    f = tar.extractfile(str(manifest_path))
+    lines = map(bytes.decode, f.readlines())
     tar.close()
+
+    # temp save manifest in case it'd be opened more times this session
+    if not manifests_path.exists():
+        manifests_path.mkdir(parents=True)
+    if not manifest.exists():
+        with open(manifest, "w") as f:
+            f.writelines(lines)
+
     return lines
 
 def get_manifest_lastbackup(lines):
