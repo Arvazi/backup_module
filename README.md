@@ -2,10 +2,14 @@
 **Advanced Fork from tompaton.**
 --
 
-*- Switched to python3 syntax*
+  * **+** Switched to python3 syntax
 
-*- Added Compression of backup to .tar.gz*
+  * **+** Compression of backup to .tar.gz
 
-*- Added skipping files which weren't modified since last backup*
+  * **+** skipping files which weren't modified since last backup
 
-*- removed tom pathon's own path.py library and use pathlib*
+    * in manifest recursive link to previous backup all the way to the one storing the file
+    
+    * when restoring, traverse these links recursive
+
+  * **-**  tom pathon's own path.py library and use official python3's pathlib
